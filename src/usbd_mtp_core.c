@@ -1344,6 +1344,7 @@ PtpGetObjectHandles(uint32_t id, uint8_t* buf, uint32_t index, uint32_t reqlen)
     if (reqlen == 0)
     {
         ParamParse(buf, 3);    // StorageID, [ObjectFormatCode], [Association]
+        vParam[3] = vParam[0];	// remember this
         len = 0;
         MTP_DBG_LVL0("%s[%u] %lX,%lX,%lX", __FUNCTION__, __LINE__, vParam[0], vParam[1], vParam[2]);
     }
@@ -1362,9 +1363,17 @@ PtpGetObjectHandles(uint32_t id, uint8_t* buf, uint32_t index, uint32_t reqlen)
         }
         MTP_DBG_LVL1("%lX %s", vParam[2], path);
     }
-    else if (!GetFileById(nullptr, DRIVE_NUM(vParam[0]) << (32 - INODE_STORAGE_BITS) | INODE_FOLDER_MASK, true, &path))
+    else
     {
-        return(PtpResponse(id, nullptr, PtpErr_InvalidStorageId));
+    	if (vParam[3] == UINT32_MAX) // List all objects on all storage ids
+    	{
+    		vParam[0] = 0x10001;
+
+    	}
+    	if (!GetFileById(nullptr, DRIVE_NUM(vParam[0]) << (32 - INODE_STORAGE_BITS) | INODE_FOLDER_MASK, true, &path))
+		{
+			return(PtpResponse(id, nullptr, PtpErr_InvalidStorageId));
+		}
     }
 
     char* path2 = strchr(path, ':') + 1;
@@ -1848,6 +1857,7 @@ PtpSendObjectInfoData(uint32_t id, uint8_t* buf, uint32_t index, uint32_t reqlen
         }
         vCreated = 0;
         vModified = 0;
+        vParam[2] = OBJECTINFO_FILENAMEOFFSET;	// Libmtp 64bit issue
     }
 
     for (i = 0; i < reqlen; i++)
@@ -1864,9 +1874,18 @@ PtpSendObjectInfoData(uint32_t id, uint8_t* buf, uint32_t index, uint32_t reqlen
 
             case OBJECTINFO_FILENAMEOFFSET: vNameLen = buf[i] << 1; vVarIdx = 0; break;
         }
-        if ((vReceivedLen + i) > OBJECTINFO_FILENAMEOFFSET)
+        // Libmtp 64bit issue; vParam[2] starts with OBJECTINFO_FILENAMEOFFSET and gets increased if needed
+		if ((vReceivedLen + i) > vParam[2])
         {
-            if ((vReceivedLen + i) <= (OBJECTINFO_FILENAMEOFFSET + vNameLen))
+			if ((vNameLen == 0) && (vReceivedLen == OBJECTINFO_FILENAMEOFFSET) && (buf[1] == 0) && (buf[2] == 0) && (buf[3] == 0))	// Libmtp 64bit issue
+			{
+		        MTP_DBG_LVL1("%s[%u] %s", __FUNCTION__, __LINE__, "libmtp ocs64 workaround");
+				vNameLen = buf[4] << 1;
+				vParam[2] += 4;
+				i += 4;
+			}
+
+			if ((vReceivedLen + i) <= (vParam[2] + vNameLen))
             {
                 if (p = strrchr((char*)vPtpBuffer, '/'), p != nullptr)
                 {
@@ -1877,13 +1896,13 @@ PtpSendObjectInfoData(uint32_t id, uint8_t* buf, uint32_t index, uint32_t reqlen
                     return(PtpResponse(id, nullptr, PtpErr_GeneralError));
                 }
             }
-            else if ((vReceivedLen + i) == (OBJECTINFO_FILENAMEOFFSET + vNameLen + 1))
+			else if ((vReceivedLen + i) == (vParam[2] + vNameLen + 1))
             {
                 vCreatedLen = buf[i] << 1;
                 vVarIdx = 0;
                 memset(vTimeStr, 0, sizeof(vTimeStr));
             }
-            else if ((vReceivedLen + i) <= (OBJECTINFO_FILENAMEOFFSET + vNameLen + vCreatedLen + 1))
+			else if ((vReceivedLen + i) <= (vParam[2] + vNameLen + vCreatedLen + 1))
             {
                 vTimeStr[vVarIdx++ >> 1] |= buf[i];
                 if (vVarIdx == vCreatedLen)
@@ -1891,13 +1910,13 @@ PtpSendObjectInfoData(uint32_t id, uint8_t* buf, uint32_t index, uint32_t reqlen
                     vCreated = PtpParseDateString(vTimeStr);
                 }
             }
-            else if ((vReceivedLen + i) == (OBJECTINFO_FILENAMEOFFSET + vNameLen + vCreatedLen + 2))
+            else if ((vReceivedLen + i) == (vParam[2] + vNameLen + vCreatedLen + 2))
             {
                 vModifiedLen = buf[i] << 1;
                 vVarIdx = 0;
                 memset(vTimeStr, 0, sizeof(vTimeStr));
             }
-            else if ((vReceivedLen + i) <= (OBJECTINFO_FILENAMEOFFSET + vNameLen + vCreatedLen + vModifiedLen + 2))
+            else if ((vReceivedLen + i) <= (vParam[2] + vNameLen + vCreatedLen + vModifiedLen + 2))
             {
                 vTimeStr[vVarIdx++ >> 1] |= buf[i];
                 if (vVarIdx == vModifiedLen)
