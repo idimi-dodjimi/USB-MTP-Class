@@ -246,7 +246,7 @@ HandleFilenameBits(char* input)
         crc = (crc << 4) ^ CrcTable[crc >> 28];
     }
     crc &= INODE_ITEM_MASK;
-    if (crc == 1)	// file ID 0 is reserved by MTP
+    if (crc == 0)	// file ID 0 is reserved by MTP
     {
         crc = 1;
     }
